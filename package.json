@@ -1,0 +1,19 @@
+{
+  "name": "suparace",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Race tests for supabase-js read-then-write bugs and the atomic Postgres fixes",
+  "scripts": {
+    "race": "node src/race.ts",
+    "test": "node --test 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.118.0"
+  },
+  "exports": {
+    ".": "./src/lib.ts",
+    "./scenarios": "./src/scenarios.ts"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,153 @@
+{
+ "suparace": "0.2.0",
+ "target": "http://127.0.0.1:8000",
+ "mode": "burst",
+ "score": "both",
+ "ns": [
+  100
+ ],
+ "runs": 3,
+ "pass": true,
+ "races": [
+  {
+   "race": "spend-ledger:naive",
+   "n": 100,
+   "expect": "violation",
+   "runs": 3,
+   "flagged_runs": 3,
+   "pass": true
+  }
+ ],
+ "reports": [
+  {
+   "suparace": "0.2.0",
+   "race": "spend-ledger:naive",
+   "expect": "violation",
+   "mode": "burst",
+   "n": 100,
+   "runs": 3,
+   "score": "both",
+   "rows": [
+    {
+     "race": "spend-ledger:naive",
+     "mode": "burst",
+     "n": 100,
+     "items": 50,
+     "run": 1,
+     "successes": 100,
+     "errors": 0,
+     "attempts": 100,
+     "wall_ms": 1024,
+     "ops_per_s": 98,
+     "p50_ms": 298.6,
+     "p95_ms": 371.8,
+     "flagged": true,
+     "pass": true,
+     "op": "spend-ledger",
+     "method": "naive",
+     "start": 50,
+     "approved": 100,
+     "http_calls": 300,
+     "non2xx": 0,
+     "neg_balance_returned": 0,
+     "distinct_balances_read": 3,
+     "final_balance": 48,
+     "ledger_rows": 100,
+     "ledger_sum": 100,
+     "invariants": {
+      "approved_le_start": false,
+      "balance_ge_0": true,
+      "ledger_eq_approved": true,
+      "conserved": false
+     },
+     "invariant_flag": true,
+     "response": {
+      "all_2xx": true,
+      "no_negative_balance_returned": true
+     },
+     "response_flag": false
+    },
+    {
+     "race": "spend-ledger:naive",
+     "mode": "burst",
+     "n": 100,
+     "items": 50,
+     "run": 2,
+     "successes": 100,
+     "errors": 0,
+     "attempts": 100,
+     "wall_ms": 358,
+     "ops_per_s": 279,
+     "p50_ms": 266.1,
+     "p95_ms": 345.2,
+     "flagged": true,
+     "pass": true,
+     "op": "spend-ledger",
+     "method": "naive",
+     "start": 50,
+     "approved": 100,
+     "http_calls": 300,
+     "non2xx": 0,
+     "neg_balance_returned": 0,
+     "distinct_balances_read": 5,
+     "final_balance": 47,
+     "ledger_rows": 100,
+     "ledger_sum": 100,
+     "invariants": {
+      "approved_le_start": false,
+      "balance_ge_0": true,
+      "ledger_eq_approved": true,
+      "conserved": false
+     },
+     "invariant_flag": true,
+     "response": {
+      "all_2xx": true,
+      "no_negative_balance_returned": true
+     },
+     "response_flag": false
+    },
+    {
+     "race": "spend-ledger:naive",
+     "mode": "burst",
+     "n": 100,
+     "items": 50,
+     "run": 3,
+     "successes": 100,
+     "errors": 0,
+     "attempts": 100,
+     "wall_ms": 415,
+     "ops_per_s": 241,
+     "p50_ms": 255.8,
+     "p95_ms": 394.3,
+     "flagged": true,
+     "pass": true,
+     "op": "spend-ledger",
+     "method": "naive",
+     "start": 50,
+     "approved": 100,
+     "http_calls": 300,
+     "non2xx": 0,
+     "neg_balance_returned": 0,
+     "distinct_balances_read": 4,
+     "final_balance": 49,
+     "ledger_rows": 100,
+     "ledger_sum": 100,
+     "invariants": {
+      "approved_le_start": false,
+      "balance_ge_0": true,
+      "ledger_eq_approved": true,
+      "conserved": false
+     },
+     "invariant_flag": true,
+     "response": {
+      "all_2xx": true,
+      "no_negative_balance_returned": true
+     },
+     "response_flag": false
+    }
+   ],
+   "flagged_runs": 3,
+   "pass": true
+  }
+ ]
+}
