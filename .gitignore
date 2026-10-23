@@ -3,3 +3,5 @@ node_modules/
 # local-only notes, never published
 flashcard.md
 consults/
+dist/
+*.tgz

@@ -144,7 +144,7 @@ export async function runRace(race: Race, opts: RunOptions): Promise<Report> {
     rows.push(row); opts.onRow?.(row);
   }
   const flagged = rows.filter((x) => x.flagged).length;
-  return { suparace: '0.2.0', race: race.name, expect: race.expect ?? 'clean', mode, n: opts.n, runs, score, rows,
+  return { suparace: '0.3.0', race: race.name, expect: race.expect ?? 'clean', mode, n: opts.n, runs, score, rows,
     flagged_runs: flagged, pass: rows.every((x) => x.pass) };
 }
 

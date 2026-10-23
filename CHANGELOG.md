@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0 (2026-10-22)
+
+- npm packaging: `bin: suparace`, compiled ESM JS + `.d.ts` in `dist/` (no TypeScript needed to use it), Node >=22
+  (supabase-js 2.118 requires it). Library exports kept (`suparace`, `suparace/scenarios`, `suparace/cli`).
+- `suparace init` writes `suparace/quickstart.sql` + `suparace/spend.race.mjs` (naive vs atomic spend).
+- `suparace run [files|dirs]`: loads `*.race.{mjs,js,ts,mts}`, env `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`,
+  PASS/FAIL lines, `--json` / `--out`, exit 0/1/2.
+- README 5-minute quickstart, timed on a local Podman stack (6.5 s of command time); cloud timing is a hypothesis.
+- Tests: 13 (6 new CLI tests).
+
 ## 0.2.0 (2026-10-22)
 
 - Library API (`src/lib.ts`): `defineRace({ setup, worker, actor, invariants, response, measure, teardown, expect })`,

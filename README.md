@@ -17,17 +17,68 @@ passes because each request on its own returns 2xx. SupaRace contains:
 About the author's experience: this is a learning and test project. The author has not run Supabase in production.
 Every number below is **measured** (with N, mode and target stated) unless it is marked **hypothesis**.
 
-Status: v0.2, early. Not yet on npm; the import path `suparace` below is the planned package name.
+Status: v0.3, early. Packaged for npm as `suparace` (CLI + library) but **not published yet**; until it is, use a
+clone (`npm install && npm run build && npm pack`, then `npx --package ./suparace-0.3.0.tgz suparace ...`).
 
-## Quick start
+## 5-minute quickstart (`npx suparace`)
 
-Requirements: Node 22+ (runs `.ts` files directly), a Supabase project you are allowed to break. A local
+Requirements: Node 22+ and a Supabase project you are allowed to break (a new Free plan project, or a local stack).
+Everything the quickstart creates is prefixed `suparace_`.
+
+```sh
+npx suparace init                 # writes suparace/quickstart.sql and suparace/spend.race.mjs
+# paste suparace/quickstart.sql into the SQL editor and run it (or: psql "$DATABASE_URL" -f suparace/quickstart.sql)
+export SUPABASE_URL=https://<project-ref>.supabase.co          # Project Settings > API
+export SUPABASE_SERVICE_ROLE_KEY=<service_role or sb_secret_ key>  # from your secret store; never commit it
+npx suparace run --race spend:naive     # the read-then-write bug: FAIL, exit 1
+npx suparace run --race spend:atomic    # the one-statement RPC fix: PASS, exit 0
+```
+
+What the race does: 50 concurrent supabase-js clients each try to spend 1 credit from a wallet holding 25.
+
+```
+FAIL spend:naive  N=50 burst expect=clean  flagged 3/3  failed: no_overspend, balance_matches  successes/run: 50,50,50  1.8s
+PASS spend:atomic  N=50 burst expect=clean  flagged 0/3  successes/run: 25,25,25  1.5s
+```
+
+**Measured (2026-10-22), local self-hosted Supabase (Podman), not a cloud project:** from an empty folder with the
+packed tarball, the five steps above (init, apply SQL, naive run, fixed run) took **6.5 s of command time** in total
+(init 1.8 s with a cold npm cache, SQL 0.2 s, naive 2.4 s, fix 2.1 s); naive approved 50 spends against 25 credits in
+3/3 runs, the fix approved exactly 25 in 3/3. **Hypothesis, not timed:** on a fresh cloud Free project the total stays
+under 5 minutes; project creation (typically 1-2 minutes) and copying the URL and key are the slow part, and each run
+takes longer over the internet than against localhost.
+
+Write your own: copy `spend.race.mjs`. A race file default-exports a race, an array of races, or a function
+`({ client, anonClient, env }) => race | race[]`, where `client()` is a new supabase-js client with the service role
+key (`anonClient()` uses `SUPABASE_ANON_KEY`), so race files need no imports. Race files ending `.race.ts` also work
+on Node 22.18+ (erasable TypeScript only: no enums or namespaces; relative imports need the `.ts` extension).
+`npx suparace --help` lists the flags (`--n`, `--runs`, `--mode burst|drain`, `--score`, `--out report.json`,
+`--json`). Exit code 0 = every race matched its `expect`, 1 = a race failed, 2 = bad config. A race can set
+`expect: 'violation'` to act as a known-bad control, and `defaults: { n, mode, runs }`.
+
+Why a CLI and not a vitest/jest plugin (consult, 2026-10-22): test runners default to short timeouts and run files in
+parallel, which fights 50-200 concurrent HTTP clients resetting shared tables. To run a race inside vitest anyway:
+
+```ts
+import { test, expect } from 'vitest';
+import { runRace, exitCode } from 'suparace';
+import races from '../suparace/spend.race.mjs';
+import { helpers } from 'suparace/cli';
+test('spend is race-safe', async () => {
+  const race = races(helpers()).find((r) => r.name === 'spend:atomic');
+  expect(exitCode(await runRace(race, { n: 50, mode: 'burst', runs: 3 }))).toBe(0);
+}, 60_000);   // and run race files serially (e.g. vitest --no-file-parallelism)
+```
+
+## Full scenarios from a clone
+
+Requirements: Node 22.18+ (runs `.ts` files directly), a Supabase project you are allowed to break. A local
 self-hosted stack is the intended target; a throwaway Free plan project also works (see "Hosted free-tier
 reproduction"). Do not point it at production data: the scenarios reset their own tables.
 
 ```sh
 npm install
-npm test                                   # 7 unit tests, in-memory, no database needed
+npm test                                   # 13 unit tests, in-memory, no database needed
 
 # apply the schema (self-hosted example; use the SQL editor on hosted)
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f sql/001_schema.sql
@@ -73,7 +124,7 @@ process.exit(exitCode(report));
 - CLI: `./run.sh 100 --mode burst --runs 3 [--race claim,spend:naive,spend-ledger] [--score both] [--out FILE]`.
   One JSON row per run on stdout, a JSON report file with `pass` per race, PASS/FAIL lines on stderr.
   v0.1 invocations still work (`BURST=1`, `--score` alone runs the ledger scenario in burst mode).
-- Tests: `npm test` (node:test, in-memory races, no Supabase needed; 7 tests).
+- Tests: `npm test` (node:test, in-memory races, no Supabase needed; 13 tests).
 
 Note: `claim:atomic_update` now fails CI in burst mode. Its double-claim count is still 0, but the `none_left`
 invariant catches the stall described below (about half the jobs left pending). That is the harness doing its job.

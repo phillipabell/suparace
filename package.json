@@ -1,19 +1,65 @@
 {
   "name": "suparace",
-  "version": "0.2.0",
-  "private": true,
+  "version": "0.3.0",
+  "description": "Race tests for supabase-js read-then-write bugs, and the atomic Postgres fixes that stop them",
   "type": "module",
-  "description": "Race tests for supabase-js read-then-write bugs and the atomic Postgres fixes",
+  "bin": {
+    "suparace": "dist/bin.js"
+  },
+  "main": "./dist/lib.js",
+  "types": "./dist/lib.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/lib.d.ts",
+      "default": "./dist/lib.js"
+    },
+    "./scenarios": {
+      "types": "./dist/scenarios.d.ts",
+      "default": "./dist/scenarios.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "default": "./dist/cli.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "templates",
+    "sql",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "race": "node src/race.ts",
     "test": "node --test 'test/*.test.ts'"
   },
+  "keywords": [
+    "supabase",
+    "supabase-js",
+    "postgres",
+    "race-condition",
+    "concurrency",
+    "testing",
+    "ci",
+    "postgrest"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phillipabell/suparace.git"
+  },
+  "homepage": "https://github.com/phillipabell/suparace#readme",
+  "bugs": "https://github.com/phillipabell/suparace/issues",
+  "license": "MIT",
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0"
   },
-  "exports": {
-    ".": "./src/lib.ts",
-    "./scenarios": "./src/scenarios.ts"
-  },
-  "license": "MIT"
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "5.9"
+  }
 }
