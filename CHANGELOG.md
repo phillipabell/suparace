@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Two-wallet transfer scenario (`transferRace`, `sql/005_transfer.sql`): naive client read-then-write, `FOR UPDATE` in
+  caller order, and the fix (both rows locked in id order in one function). Invariants: total constant, no negative
+  balance, no deadlock (client 40P01 or `pg_stat_database.deadlocks` delta), no client error. `--race transfer`,
+  `transfer:<method>@<pause_ms>`. Measured self-hosted burst N=100 x5 (README).
+- Tests: 14.
+
 ## 0.3.0 (2026-10-22)
 
 - npm packaging: `bin: suparace`, compiled ESM JS + `.d.ts` in `dist/` (no TypeScript needed to use it), Node >=22

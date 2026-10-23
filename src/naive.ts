@@ -32,3 +32,18 @@ export async function spendNaive(sb: SupabaseClient, wallet: number, amount: num
   }
   return data.balance - amount;
 }
+
+// Transfer between two wallets: read both balances, check in the client, write both. Three HTTP calls, no lock.
+// A concurrent transfer touching either wallet can land between the read and the writes: its effect is
+// overwritten (money destroyed) or counted twice (money created), and the funds check can pass on a stale balance.
+export async function transferNaive(sb: SupabaseClient, src: number, dst: number, amount: number): Promise<number | null> {
+  const { data, error } = await sb.from('transfer_wallets').select('id, balance').in('id', [src, dst]);
+  if (error) throw error;
+  const s = data.find((r: any) => r.id === src), d = data.find((r: any) => r.id === dst);
+  if (!s || !d || s.balance < amount) return null;
+  const { error: e1 } = await sb.from('transfer_wallets').update({ balance: s.balance - amount }).eq('id', src);
+  if (e1) throw e1;
+  const { error: e2 } = await sb.from('transfer_wallets').update({ balance: d.balance + amount }).eq('id', dst);
+  if (e2) throw e2;
+  return s.balance - amount;
+}

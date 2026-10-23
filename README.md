@@ -5,7 +5,7 @@
 Not affiliated with or endorsed by Supabase.
 
 supabase-js has no client-side transactions. App code that reads a row, decides in JavaScript, then writes
-(claim a job, sell stock, spend a balance) breaks when many clients do it at once, and every normal test still
+(claim a job, sell stock, spend a balance, move money between two accounts) breaks when many clients do it at once, and every normal test still
 passes because each request on its own returns 2xx. SupaRace contains:
 
 - the naive client code (`src/naive.ts`) and the fixes as Postgres functions called with `supabase.rpc()`
@@ -78,7 +78,7 @@ reproduction"). Do not point it at production data: the scenarios reset their ow
 
 ```sh
 npm install
-npm test                                   # 13 unit tests, in-memory, no database needed
+npm test                                   # 14 unit tests, in-memory, no database needed
 
 # apply the schema (self-hosted example; use the SQL editor on hosted)
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f sql/001_schema.sql
@@ -124,7 +124,7 @@ process.exit(exitCode(report));
 - CLI: `./run.sh 100 --mode burst --runs 3 [--race claim,spend:naive,spend-ledger] [--score both] [--out FILE]`.
   One JSON row per run on stdout, a JSON report file with `pass` per race, PASS/FAIL lines on stderr.
   v0.1 invocations still work (`BURST=1`, `--score` alone runs the ledger scenario in burst mode).
-- Tests: `npm test` (node:test, in-memory races, no Supabase needed; 13 tests).
+- Tests: `npm test` (node:test, in-memory races, no Supabase needed; 14 tests).
 
 Note: `claim:atomic_update` now fails CI in burst mode. Its double-claim count is still 0, but the `none_left`
 invariant catches the stall described below (about half the jobs left pending). That is the harness doing its job.
@@ -183,6 +183,80 @@ What this shows (measured, this setup only):
   user-facing calls and a separate service-only function for backend workers.
 - Not tested: the free hosted project (this run was self-hosted only), policies with joins or `security_barrier`
   views, pgmq under RLS (pgmq queues have no row owner).
+
+## Two-wallet transfer: lock ordering and deadlocks (measured 2026-10-22)
+
+`transferRace` in `src/scenarios.ts`, schema `sql/005_transfer.sql` (remove with `sql/005_transfer_drop.sql`).
+10 wallets x 10 credits = 100 in total. Burst: N clients each make ONE transfer of 1-5 credits from a random wallet to
+a different random wallet, so many pairs run in both directions at once. The plan is seeded: run k of every method
+uses the same transfers. Invariants: total stays 100, every wallet reconciles (final = start + signed sum of the transfers that reported
+success), no balance below 0, no deadlock, no client error.
+
+- `transfer:naive`: the client reads both balances, checks in JS, then PATCHes src and dst with the computed values.
+- `transfer:unordered`: one function, `SELECT src FOR UPDATE`, then `SELECT dst FOR UPDATE`, check, two UPDATEs.
+  Race-safe, but A->B and B->A can each hold one row and wait for the other.
+- `transfer:ordered` (the fix): one function that locks both rows in one statement in id order, then checks:
+
+```sql
+if src is null or dst is null or amount is null or src = dst or amount <= 0 then return null; end if;
+perform 1 from public.transfer_wallets where id in (src, dst) order by id for update;
+get diagnostics locked = row_count;
+if locked <> 2 then return null; end if;   -- missing wallet: the dst UPDATE would silently do nothing
+select balance into b from public.transfer_wallets where id = src;
+if b is null or b < amount then return null; end if;
+update public.transfer_wallets set balance = balance - amount where id = src;
+update public.transfer_wallets set balance = balance + amount where id = dst;
+```
+
+- `@20` runs the same function with `pause_ms=20` inside the lock (a stand-in for extra work in the transaction).
+
+Deadlocks are counted two ways: SQLSTATE `40P01` seen by the client, and the change in Postgres's own counter
+(`pg_stat_database.deadlocks`, read 1.5 s after the run so the backends have flushed their stats; this needs a database
+nothing else is using). Run: `./run.sh 100 --mode burst --runs 5 --race transfer,transfer:unordered@20,transfer:ordered@20`.
+Raw rows: `results/transfer-burst-2026-10-22.jsonl` (+ `.json` report). Self-hosted, burst, N=100, 5 runs, mean:
+
+| Method | Approved / refused | Client errors | Money created (+) or destroyed (-) per run | Wallets that do not reconcile (of 10) | Postgres deadlocks per run (range) | Wall ms | p50 / p95 ms | CI |
+|---|---|---|---|---|---|---|---|---|
+| naive | 97.8 / 2.2 | 0 | +20, +15, +25, +22, +2 | 9.8 | 0 | 409 | 176 / 238 | flagged 5/5 (control) |
+| unordered | 81.2 / 18.8 | 0 | 0 | 0 | **9.8** (5-14) | 5,425 | 2,531 / 5,214 | flagged 5/5 (control) |
+| ordered | 82.4 / 17.6 | 0 | 0 | 0 | 0 | 567 | 138 / 398 | 0/5, PASS |
+| unordered@20 | 81.0 / 19.0 | 0 | 0 | 0 | **16.6** (14-18) | 7,818 | 5,129 / 7,773 | flagged 5/5 (control) |
+| ordered@20 | 82.4 / 17.6 | 0 | 0 | 0 | 0 | 1,026 | 488 / 951 | 0/5, PASS |
+
+Lowest balance seen: 0 for the locking methods, 3 for naive. Cross-check of the deadlock count: Postgres's counter moved
+by 132 over the whole batch (read again 12 s after the last run), equal to the sum of the per-run counts.
+
+What this shows (measured, this setup only):
+- The naive transfer breaks the books in every run: an overwritten PATCH erases another transfer's effect, so credits
+  appear or vanish, and on average 9.8 of 10 wallets end with a balance that does not match the transfers that
+  reported success. Run 5 is the warning case: the total was off by only +2 while all 10 wallets were wrong, so a
+  "total is constant" check alone can miss errors that cancel out. No request failed and no balance went negative,
+  so neither a response check nor a `balance >= 0` constraint would have caught any of it.
+- `FOR UPDATE` in caller order keeps the money right but deadlocks in every run. **No client ever received 40P01.**
+  Postgres counted the deadlocks; the clients saw slow successes instead: p50 2.5 s against 0.14 s for the ordered
+  fix, about 10x the wall time; with 20 ms of work inside the lock, 16.6 deadlocks per run and 7.8 s wall.
+- In an earlier batch of the same races the same evening (host busier; before the reconciliation check and the
+  missing-wallet guard were added), `unordered@20` also lost on average 23.8 of 100 calls per run to `PGRST003`
+  (PostgREST timed out waiting for a free DB connection, its pool is 10), with 23.0 deadlocks per run and 10.3 s
+  wall; the ordered fix had 0 errors and 0 deadlocks in that batch too. Its raw rows were overwritten by the
+  final batch above, so treat it as a note, not a table row.
+- Locking both rows in id order: 0 deadlocks, 0 errors, books reconciled in all 10 runs, and the fastest locking method.
+- Why 40P01 never reached the client (measured, one direct probe): two opposite transfers (`pause_ms=500`, sent 50 ms
+  apart) with curl straight to PostgREST's own port, bypassing the API gateway and supabase-js, through a copy of
+  the unordered function that bumps a sequence on entry (sequences survive rollback). Result: Postgres counted 1
+  deadlock, the function ran 3 times for 2 requests, both requests returned HTTP 200 and both transfers were applied
+  exactly once (10/10 -> 12/8). So PostgREST itself re-runs a transaction aborted by a deadlock (PostgREST 14.18; not
+  checked against its source or other versions). Practical effect: on Supabase a lock-order bug shows up as seconds
+  of latency and, under load, pool timeouts for unrelated requests, not as deadlock errors in your logs.
+- Approved counts differ between methods on the same plan because the commit order differs, and a wallet can be
+  short at one moment and funded the next. "Refused" means insufficient funds, not an error. Naive approves more
+  because stale reads pass the funds check. Naive makes 3 HTTP calls per transfer against 1 RPC, so its latency is
+  not comparable.
+- The id-order fix only holds if every code path that locks two wallets uses the same order; a plain multi-row
+  UPDATE or another function locking src-then-dst can still deadlock against it.
+- Not tested (review suggestions, open): hosted Free project (self-hosted only), SERIALIZABLE + retry,
+  `lock_timeout`/`NOWAIT`, a single `UPDATE ... CASE` transfer, advisory locks, pool size and wallet-count sweeps
+  (10 hot wallets here), more than 5 runs.
 
 ## How it runs
 
@@ -417,8 +491,8 @@ revoked from anon in `sql/001_schema.sql`; the RLS matrix above confirms anon is
 2. RLS matrix rerun on a free hosted project (so far self-hosted only).
 3. Crash-safe pgmq (`read` + visibility timeout + `delete`): kill a worker mid-job, measure redelivery.
 4. Exactly-once webhook processing (unique idempotency key + `insert ... on conflict do nothing`).
-5. Two-wallet transfer (lock ordering; the first test where deadlock is possible).
-6. SERIALIZABLE + retry loop as a comparison row.
+5. SERIALIZABLE + retry loop as a comparison row (claim, spend, transfer).
+6. Transfer race on a free hosted project.
 
 ## License
 

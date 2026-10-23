@@ -2,8 +2,8 @@
 // Schema: sql/001_schema.sql (+ 002_queue_len.sql; 003_ledger.sql for spendLedgerRace).
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { defineRace, type Race } from './lib.ts';
-import { claimJobNaive, spendNaive, type SpendObs } from './naive.ts';
-import { claimJobAtomic, claimJobSkipLocked, claimJobPgmq, spendAtomic, spendLocked } from './fixed.ts';
+import { claimJobNaive, spendNaive, transferNaive, type SpendObs } from './naive.ts';
+import { claimJobAtomic, claimJobSkipLocked, claimJobPgmq, spendAtomic, spendLocked, transferUnordered, transferOrdered } from './fixed.ts';
 
 export interface Target { url: string; key: string }
 type ClaimFn = (sb: SupabaseClient, w: string) => Promise<number | null>;
@@ -11,6 +11,8 @@ type SpendFn = (sb: SupabaseClient, wallet: number, amt: number) => Promise<numb
 
 export const CLAIM: Record<string, ClaimFn> = { naive: claimJobNaive, atomic_update: claimJobAtomic, skip_locked: claimJobSkipLocked, pgmq: claimJobPgmq };
 export const SPEND: Record<string, SpendFn> = { naive: spendNaive, conditional_update: spendAtomic, for_update: spendLocked };
+type TransferFn = (sb: SupabaseClient, src: number, dst: number, amt: number, pauseMs: number) => Promise<number | null>;
+export const TRANSFER: Record<string, TransferFn> = { naive: (sb, s, d, a) => transferNaive(sb, s, d, a), unordered: transferUnordered, ordered: transferOrdered };
 
 const client = (t: Target) => createClient(t.url, t.key, { auth: { persistSession: false, autoRefreshToken: false } });
 
@@ -93,5 +95,75 @@ export function spendLedgerRace(t: Target): Race {
       no_negative_balance_returned: o.successes.every((b) => b >= 0) }),
     invariants: (ctx, o) => ({ approved_le_start: ctx.sum! <= ctx.start, balance_ge_0: ctx.final! >= 0,
       ledger_eq_approved: ctx.rows === o.successes.length, conserved: ctx.final === ctx.start - ctx.sum! }),
+  });
+}
+
+/** Small seeded PRNG so every method sees the same transfer plan for the same run index. */
+export function mulberry32(seed: number) {
+  return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+export type Transfer = { src: number; dst: number; amount: number };
+/** n transfers between random distinct wallets 1..wallets, amount 1..maxAmount, both directions. */
+export function transferPlan(n: number, wallets: number, maxAmount: number, seed: number): Transfer[] {
+  const rnd = mulberry32(seed);
+  return Array.from({ length: n }, () => {
+    const src = 1 + Math.floor(rnd() * wallets);
+    let dst = 1 + Math.floor(rnd() * (wallets - 1)); if (dst >= src) dst++;
+    return { src, dst, amount: 1 + Math.floor(rnd() * maxAmount) };
+  });
+}
+
+/** N workers each make one transfer between a random pair of wallets (both directions occur).
+ *  method: naive | unordered | ordered, optionally '@<ms>' = pause inside the lock (e.g. 'unordered@20').
+ *  Invariants: total money constant, every wallet reconciles with the approved transfers, no balance below 0, no deadlock (40P01 seen by the client, or counted by
+ *  Postgres in pg_stat_database during the run: needs a database used by nothing else). Needs sql/005_transfer.sql. */
+export function transferRace(t: Target, methodArg: string, opts: { wallets?: number; start?: number; maxAmount?: number } = {}): Race {
+  const [method, p] = methodArg.split('@'); const pauseMs = Number(p ?? 0);
+  const fn = TRANSFER[method]; if (!fn || !(pauseMs >= 0)) throw new Error(`unknown transfer method ${methodArg}`);
+  const W = opts.wallets ?? 10, START = opts.start ?? 10, MAX = opts.maxAmount ?? 5;
+  const admin = client(t);
+  let seed = 0;   // k-th run of every transfer race uses seed k: same plan across methods
+  type Ctx = { plan: Transfer[]; codes: string[]; dl0: number; dbDeadlocks?: number; total?: number; min?: number; off?: number };
+  // pg_stat counters are flushed by each backend within ~1 s of going idle; wait before reading so a run's
+  // deadlocks are not counted in the next run.
+  const deadlockCount = async () => { await new Promise((r) => setTimeout(r, 1500));
+    const { data, error } = await admin.rpc('suparace_deadlocks'); if (error) throw error; return Number(data); };
+  return defineRace<Ctx, SupabaseClient, number>({
+    name: `transfer:${methodArg}`,
+    expect: method === 'ordered' ? 'clean' : 'violation',
+    items: () => W,
+    setup: async ({ n }) => {
+      const { error } = await admin.rpc('suparace_transfer_reset', { n_wallets: W, start_balance: START });
+      if (error) throw error;
+      return { plan: transferPlan(n, W, MAX, ++seed), codes: [], dl0: await deadlockCount() };
+    },
+    worker: async () => { const sb = client(t); await sb.from('transfer_wallets').select('id').limit(1); return sb; },
+    actor: async (sb, ctx, i) => {
+      const { src, dst, amount } = ctx.plan[i];
+      try { return await fn(sb, src, dst, amount, pauseMs); }
+      catch (e: any) { ctx.codes.push(String(e?.code || e?.message || 'unknown').slice(0, 60)); throw e; }
+    },
+    measure: async (ctx, o) => {
+      const { data, error } = await admin.from('transfer_wallets').select('balance');
+      if (error) throw error;
+      ctx.total = data.reduce((a, r: any) => a + r.balance, 0); ctx.min = Math.min(...data.map((r: any) => r.balance));
+      // per-wallet reconciliation: final = start + signed sum of the transfers that reported success
+      const want = new Map<number, number>(Array.from({ length: W }, (_, k) => [k + 1, START]));
+      o.byWorker.forEach((ok, i) => { if (ok.length) { const p = ctx.plan[i];
+        want.set(p.src, want.get(p.src)! - p.amount); want.set(p.dst, want.get(p.dst)! + p.amount); } });
+      const { data: rows, error: e2 } = await admin.from('transfer_wallets').select('id, balance');
+      if (e2) throw e2;
+      ctx.off = rows.filter((r: any) => r.balance !== want.get(r.id)).length;
+      const deadlocks = ctx.codes.filter((c) => c === '40P01').length;
+      ctx.dbDeadlocks = (await deadlockCount()) - ctx.dl0;
+      return { op: 'transfer', method, pause_ms: pauseMs, wallets: W, total_start: W * START, total_final: ctx.total,
+        money_delta: ctx.total - W * START, wallets_off: ctx.off, min_balance: ctx.min, db_deadlocks: ctx.dbDeadlocks, client_40P01: deadlocks, other_errors: ctx.codes.length - deadlocks,
+        error_codes: ctx.codes.reduce((a: Record<string, number>, c) => (a[c] = (a[c] ?? 0) + 1, a), {}),
+        refused: o.attempts - o.successes.length - o.errors, violations: Math.abs(ctx.total - W * START) };
+    },
+    response: (ctx) => ({ no_errors: ctx.codes.length === 0 }),
+    invariants: (ctx) => ({ total_constant: ctx.total === W * START, reconciled: ctx.off === 0, none_negative: ctx.min! >= 0,
+      no_deadlock: ctx.dbDeadlocks === 0 && !ctx.codes.includes('40P01'), no_errors: ctx.codes.length === 0 }),
   });
 }

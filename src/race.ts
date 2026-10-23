@@ -3,7 +3,8 @@
 //   --mode burst|drain   burst: N/2 items, one try per worker. drain: 5N items, loop until refused. Default drain
 //                        (v0.1 default); BURST=1 in the env also selects burst.
 //   --runs R             runs per race per N (default 3)
-//   --race a,b           claim:<method>, spend:<method>, spend-ledger, or claim / spend for all methods.
+//   --race a,b           claim:<method>, spend:<method>, spend-ledger, transfer:<method>[@pause_ms], or claim / spend /
+//                        transfer for all methods.
 //                        Default: claim + spend (all methods).
 //   --score invariant|response|both   default invariant. Given alone (no --race), runs spend-ledger in burst mode,
 //                        which is the v0.1 --score behaviour.
@@ -12,7 +13,7 @@
 // (fixes: no flagged run; naive controls: every run flagged), 1 otherwise, 2 on bad config.
 import { writeFileSync } from 'node:fs';
 import { runRace, exitCode, type Mode, type Score, type Report, type Race } from './lib.ts';
-import { CLAIM, SPEND, claimRace, spendRace, spendLedgerRace, type Target } from './scenarios.ts';
+import { CLAIM, SPEND, TRANSFER, claimRace, spendRace, spendLedgerRace, transferRace, type Target } from './scenarios.ts';
 
 const die = (m: string) => { console.error(m); process.exit(2); };
 const url = process.env.SUPARACE_URL ?? 'http://127.0.0.1:8000', key = process.env.SUPARACE_KEY;
@@ -34,12 +35,14 @@ if (ns.some((n) => !(n >= 1))) die(`bad N in ${args.join(' ')}`);
 
 function races(): Race[] {
   const names = (raceArg ?? 'claim,spend').split(',').flatMap((r) =>
-    r === 'claim' ? Object.keys(CLAIM).map((m) => `claim:${m}`) : r === 'spend' ? Object.keys(SPEND).map((m) => `spend:${m}`) : [r]);
+    r === 'claim' ? Object.keys(CLAIM).map((m) => `claim:${m}`) : r === 'spend' ? Object.keys(SPEND).map((m) => `spend:${m}`)
+      : r === 'transfer' ? Object.keys(TRANSFER).map((m) => `transfer:${m}`) : [r]);
   return names.map((r) => {
     const [op, m] = r.split(':');
     if (op === 'claim') return claimRace(t, m);
     if (op === 'spend') return spendRace(t, m);
     if (op === 'spend-ledger') return spendLedgerRace(t);
+    if (op === 'transfer') return transferRace(t, m);
     return die(`unknown race ${r}`) as never;
   });
 }
