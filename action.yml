@@ -1,0 +1,142 @@
+name: SupaRace
+description: Race tests for supabase-js read-then-write bugs. Fails the job when a race breaks an invariant. Not affiliated with or endorsed by Supabase.
+author: suparace contributors
+branding:
+  icon: zap
+  color: green
+
+inputs:
+  target:
+    description: "'local' starts a Supabase local stack on the runner (supabase start); 'project' uses supabase-url and supabase-key. Never point it at production data."
+    default: local
+  races:
+    description: Race files or directories, space-separated (default suparace, as written by `suparace init`).
+    default: suparace
+  race:
+    description: Only these race names, comma-separated (default all).
+    default: ""
+  n:
+    description: Concurrent clients per run (default 50, or the race's own defaults.n).
+    default: ""
+  runs:
+    description: Runs per race (default 3).
+    default: ""
+  mode:
+    description: burst or drain (default burst).
+    default: ""
+  score:
+    description: invariant, response or both (default invariant).
+    default: ""
+  sql:
+    description: "target=local only: SQL files to apply to the local database before racing, space-separated (e.g. suparace/quickstart.sql). For target=project, apply your schema yourself."
+    default: ""
+  supabase-url:
+    description: "target=project: the project API URL. Pass from secrets."
+    default: ""
+  supabase-key:
+    description: "target=project: a service_role / secret key for a throwaway project. Pass from secrets."
+    default: ""
+  supabase-anon-key:
+    description: Optional anon / publishable key, for races that use anonClient().
+    default: ""
+  exclude-services:
+    description: "target=local: services passed to `supabase start -x` (not needed for races; makes start faster)."
+    default: studio,imgproxy,edge-runtime,logflare,vector,realtime,storage-api,supavisor
+  cli:
+    description: "'action' runs the CLI from this action's own checkout (same version as the action tag). 'npm' runs `npx suparace@<version>`."
+    default: action
+  version:
+    description: "cli=npm only: npm version spec."
+    default: latest
+  node-version:
+    description: Node version for the runner (22.18+ needed for .race.ts files).
+    default: "22"
+  report:
+    description: Where to write the JSON report.
+    default: suparace-report.json
+
+outputs:
+  pass:
+    description: "'true' when every race matched its expect."
+    value: ${{ steps.run.outputs.pass }}
+  report:
+    description: Path of the JSON report.
+    value: ${{ inputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install the SupaRace CLI from the action checkout
+      if: inputs.cli == 'action'
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+
+    - name: Start a local Supabase stack
+      if: inputs.target == 'local'
+      uses: supabase/setup-cli@v1
+      with:
+        version: latest
+
+    - name: supabase start
+      if: inputs.target == 'local'
+      shell: bash
+      env:
+        EXCLUDE: ${{ inputs.exclude-services }}
+        SQL: ${{ inputs.sql }}
+      run: |
+        set -euo pipefail
+        stack="$RUNNER_TEMP/suparace-stack"
+        mkdir -p "$stack" && cd "$stack"
+        [ -f supabase/config.toml ] || supabase init --force >/dev/null
+        supabase start ${EXCLUDE:+-x "$EXCLUDE"}
+        supabase status -o env > "$RUNNER_TEMP/suparace-stack.env"
+        vars="$RUNNER_TEMP/suparace-vars.env"
+        bash "${{ github.action_path }}/action/stack-env.sh" "$RUNNER_TEMP/suparace-stack.env" > "$vars"
+        grep -E '^SUPABASE_(SERVICE_ROLE|ANON)_KEY=' "$vars" | cut -d= -f2- | sed 's/^/::add-mask::/'
+        cat "$vars" >> "$GITHUB_ENV"
+        db=$(grep '^SUPARACE_DB_URL=' "$vars" | cut -d= -f2- || true)
+        cd "$GITHUB_WORKSPACE"
+        for f in $SQL; do
+          echo "applying $f"
+          psql "${db:?no DB_URL from supabase status}" -v ON_ERROR_STOP=1 -q -f "$f"
+        done
+
+    - name: Use the project target
+      if: inputs.target == 'project'
+      shell: bash
+      env:
+        URL: ${{ inputs.supabase-url }}
+        KEY: ${{ inputs.supabase-key }}
+        ANON: ${{ inputs.supabase-anon-key }}
+      run: |
+        set -euo pipefail
+        [ -n "$URL" ] && [ -n "$KEY" ] || { echo "::error::target=project needs supabase-url and supabase-key (from secrets)"; exit 2; }
+        echo "::add-mask::$KEY"
+        { echo "SUPABASE_URL=$URL"; echo "SUPABASE_SERVICE_ROLE_KEY=$KEY"; } >> "$GITHUB_ENV"
+        if [ -n "$ANON" ]; then echo "::add-mask::$ANON"; echo "SUPABASE_ANON_KEY=$ANON" >> "$GITHUB_ENV"; fi
+
+    - name: Run races
+      id: run
+      shell: bash
+      env:
+        RACES: ${{ inputs.races }}
+        RACE: ${{ inputs.race }}
+        N: ${{ inputs.n }}
+        RUNS: ${{ inputs.runs }}
+        MODE: ${{ inputs.mode }}
+        SCORE: ${{ inputs.score }}
+        REPORT: ${{ inputs.report }}
+        CLI: ${{ inputs.cli }}
+        VERSION: ${{ inputs.version }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: bash "$ACTION_PATH/action/run.sh"
+
+    - name: Stop the local stack
+      if: always() && inputs.target == 'local'
+      shell: bash
+      run: cd "$RUNNER_TEMP/suparace-stack" 2>/dev/null && supabase stop --no-backup || true

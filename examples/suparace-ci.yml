@@ -1,0 +1,35 @@
+# Example workflow: copy to .github/workflows/suparace.yml in your repo.
+# Runs your race files (written by `npx suparace init`) against a throwaway local Supabase stack on the
+# GitHub runner, and fails the job when a race breaks an invariant.
+name: suparace
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  races:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: phillipabell/suparace@main   # pin a release tag once one exists
+        with:
+          target: local
+          sql: suparace/quickstart.sql          # your schema + the functions under test
+          races: suparace
+          race: spend:atomic                    # spend:naive is the known bug: it fails on purpose
+          n: "50"
+          runs: "3"
+
+  # Against a throwaway Free plan project instead (never production data):
+  races-project:
+    if: false   # enable once the repo has the secrets below
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: phillipabell/suparace@main   # pin a release tag once one exists
+        with:
+          target: project
+          supabase-url: ${{ secrets.SUPARACE_URL }}
+          supabase-key: ${{ secrets.SUPARACE_SERVICE_ROLE_KEY }}
+          races: suparace

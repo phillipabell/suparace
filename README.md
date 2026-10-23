@@ -147,6 +147,39 @@ v0.1 harness and v0.2 library run back to back on the same stack. Raw: `results/
 
 Same counts within run-to-run noise; the fixes are 0 violations in every run under both harnesses.
 
+## GitHub Action
+
+`action.yml` in this repo is a thin composite action over the CLI. It runs your race files and fails the job when a
+race breaks an invariant, with a results table in the job summary. Copy `examples/suparace-ci.yml` to
+`.github/workflows/` in your repo.
+
+```yaml
+- uses: actions/checkout@v4
+- uses: phillipabell/suparace@main      # pin a release tag once one exists
+  with:
+    target: local                       # supabase start on the runner (GitHub's Docker), torn down after
+    sql: suparace/quickstart.sql        # schema + functions under test, applied with psql
+    races: suparace
+    race: spend:atomic
+```
+
+- `target: local` installs the Supabase CLI, runs `supabase start` (services the races don't need are skipped via
+  `exclude-services`), applies the `sql` files and points the CLI at that stack. `target: project` takes
+  `supabase-url` and `supabase-key` (and optionally `supabase-anon-key`) from your secrets, for a throwaway project.
+  Never point it at production data.
+- Inputs mirror the CLI flags: `race`, `n`, `runs`, `mode`, `score`; `report` (default `suparace-report.json`).
+  Outputs: `pass` (`true`/`false`) and `report`.
+- `cli: action` (default) runs the CLI from the action's own checkout, so the action tag pins the CLI version.
+  `cli: npm` runs `npx suparace@<version>` instead, once the package is on npm.
+- Exit code: the CLI's own (0 every race matched its `expect`, 1 a race failed, 2 bad config or unreachable target).
+
+**Status (2026-10-23):** checked locally only, not yet run on GitHub. Measured: actionlint 1.7.7 passes on the
+action metadata and the example workflow; shellcheck 0.10.0 passes on the scripts; `test/action.test.ts` runs the
+run step against a stub CLI (inputs passed through, exit code kept, `pass` output and summary written). Against a
+local self-hosted stack, only the unreachable-target path was exercised (exit 2, "no report" summary). **Hypothesis,
+not tested:** `supabase start` with the default exclusions comes up on a GitHub-hosted ubuntu runner within the
+job's free minutes. The first green run on GitHub comes with the npm release.
+
 ## RLS matrix: the races through the Data API with real JWTs (measured 2026-10-22)
 
 `src/rls.ts` (schema `sql/004_rls.sql`, remove with `sql/004_rls_drop.sql`). Two throwaway users are created with
@@ -563,7 +596,8 @@ revoked from anon in `sql/001_schema.sql`; the RLS matrix above confirms anon is
 
 ## Roadmap
 
-1. npm package with a `npx suparace init|run` CLI, then a thin GitHub Action over the CLI.
+1. npm package with a `npx suparace init|run` CLI (built, publish pending), then a thin GitHub Action over the CLI
+   (built, see "GitHub Action"; first run on GitHub pending).
 2. RLS matrix rerun on a free hosted project (so far self-hosted only).
 3. Crash-safe pgmq: done (self-hosted), see above. Hosted rerun and real process kills not done.
 4. Exactly-once webhook processing: done (self-hosted), see above. Hosted rerun not done.
