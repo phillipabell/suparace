@@ -56,7 +56,7 @@ on Node 22.18+ (erasable TypeScript only: no enums or namespaces; relative impor
 `--json`). Exit code 0 = every race matched its `expect`, 1 = a race failed, 2 = bad config. A race can set
 `expect: 'violation'` to act as a known-bad control, and `defaults: { n, mode, runs }`.
 
-Why a CLI and not a vitest/jest plugin (consult, 2026-10-22): test runners default to short timeouts and run files in
+Why a CLI and not a vitest/jest plugin: test runners default to short timeouts and run files in
 parallel, which fights 50-200 concurrent HTTP clients resetting shared tables. To run a race inside vitest anyway:
 
 ```ts
