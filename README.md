@@ -14,7 +14,6 @@ passes because each request on its own returns 2xx. SupaRace contains:
   checks **database invariants** (not just HTTP responses);
 - an RLS matrix that runs the same races as anon, two real signed-in users and service_role.
 
-About the author's experience: this is a learning and test project. The author has not run Supabase in production.
 Every number below is **measured** (with N, mode and target stated) unless it is marked **hypothesis**.
 
 Status: v0.3, early. Packaged for npm as `suparace` (CLI + library) but **not published yet**; until it is, use a
