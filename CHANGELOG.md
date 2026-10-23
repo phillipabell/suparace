@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Crash-safe pgmq race (`src/crash.ts`, `sql/007_crash.sql`): P% of workers crash holding a job, P% stall past the
+  visibility timeout. `pop` vs `read` + vt + archive without and with an `on conflict do nothing` guard. Invariants: no
+  lost jobs, no double completion. `--race crash[:m@P]`, drain mode. Measured self-hosted N=100 x5 at P=10 and 30
+  (README). Results `results/crash-drain-2026-10-23.json[l]`.
+- Fix: `src/race.ts` imported `./scenarios.ts` twice.
 - Two-wallet transfer scenario (`transferRace`, `sql/005_transfer.sql`): naive client read-then-write, `FOR UPDATE` in
   caller order, and the fix (both rows locked in id order in one function). Invariants: total constant, no negative
   balance, no deadlock (client 40P01 or `pg_stat_database.deadlocks` delta), no client error. `--race transfer`,

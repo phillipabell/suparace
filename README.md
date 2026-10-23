@@ -292,6 +292,48 @@ What this shows (measured, this setup only):
   that needs an outbox or the provider's own idempotency key, which this test does not cover.
 - Not tested: the free hosted project (self-hosted only so far), duplicates spread over time instead of one burst.
 
+## Crash-safe pgmq: lost jobs vs redelivery (measured 2026-10-23)
+
+`crashRace` in `src/crash.ts`, schema `sql/007_crash.sql` (remove with `sql/007_crash_drop.sql`). N workers drain a
+pgmq queue of 2N jobs. The first P% of workers "crash" on their first job: they take it and never finish it. The next
+P% stall on their first job for vt + 1 s (vt = visibility timeout, 2 s), then finish it anyway. Finishing a job =
+one RPC that applies the side effect (a `crash_effects` row) and archives the message. Invariants: every job
+finished (no lost jobs), each job's side effect applied exactly once (no double completion).
+
+- `pop`: `pgmq.pop()` reads and deletes the message in one statement.
+- `read_no_dedupe`: `pgmq.read(queue, vt, 1)` hides the message for vt seconds instead of deleting it; finish =
+  side effect + `pgmq.archive()`. The handler is not idempotent.
+- `read_archive`: same read + vt + archive, and the side effect only runs if `insert into crash_done ... on conflict
+  (job) do nothing returning` returned a row, in the same transaction as the archive.
+
+Run: `./run.sh 100 --mode drain --runs 5 --score both --race crash:pop@10,crash:read_no_dedupe@10,...`
+(`--race crash` runs all three at P=10; drain mode only). Self-hosted, N=100 workers, 200 jobs, 5 runs per cell, all
+6 cells matched their expected outcome (exit 0). Raw: `results/crash-drain-2026-10-23.json[l]`.
+
+| Method | P=10 (10 crash, 10 stall) | P=30 (30 crash, 30 stall) |
+|---|---|---|
+| pop: lost jobs per run | 10 in 5/5 runs | 30 in 5/5 runs |
+| read_no_dedupe: lost / double-completed per run | 0 / 10 in 5/5 runs | 0 / 30 in 5/5 runs |
+| read_archive: lost / double-completed per run | 0 / 0 in 5/5 runs | 0 / 0 in 5/5 runs |
+| messages redelivered (read more than once), read methods | 19-20 per run | 60 per run |
+| response-only scoring: pop and read_no_dedupe runs flagged | 0 of 10 | 0 of 10 |
+
+What this shows (measured, this setup only):
+- pop lost exactly one job per crashed worker in every run, with every HTTP call returning 2xx (0 errors), so
+  response-only scoring flagged none of the 20 violating runs (pop and read_no_dedupe, both P).
+- read + vt brought every crashed worker's job back after vt: 0 lost jobs in 20 runs. But a worker that is slow,
+  not dead, also gets its job redelivered, and without a dedupe both workers apply the side effect: exactly one double
+  completion per staller in every run.
+- read + vt + the `on conflict do nothing` guard in the same transaction as the archive: 0 lost, 0 double in 10 runs.
+- Cost (measured): each run took about 3.2 s wall for every method, set by the 3 s stall, not by the queue.
+- Not explained yet: one `read_no_dedupe@10` run counted 19 redelivered messages instead of 20, while its lost and
+  double counts were the expected 0 and 10.
+- Hypothesis, not measured: a side effect outside the database (email, payment API) cannot be guarded this way; it
+  needs the provider's idempotency key or an outbox. vt must be longer than the slowest normal job, or healthy jobs
+  get redelivered too (`pgmq.set_vt` can extend it mid-job).
+- Not tested: the free hosted project, real process kills (the crash here is a worker that stops calling), other vt
+  values, `pgmq.delete` instead of `archive`.
+
 ## How it runs
 
 - Measured setup for every "self-hosted" number in this README: the official self-hosted Supabase stack under
@@ -523,7 +565,7 @@ revoked from anon in `sql/001_schema.sql`; the RLS matrix above confirms anon is
 
 1. npm package with a `npx suparace init|run` CLI, then a thin GitHub Action over the CLI.
 2. RLS matrix rerun on a free hosted project (so far self-hosted only).
-3. Crash-safe pgmq (`read` + visibility timeout + `delete`): kill a worker mid-job, measure redelivery.
+3. Crash-safe pgmq: done (self-hosted), see above. Hosted rerun and real process kills not done.
 4. Exactly-once webhook processing: done (self-hosted), see above. Hosted rerun not done.
 5. SERIALIZABLE + retry loop as a comparison row (claim, spend, transfer).
 6. Transfer race on a free hosted project.

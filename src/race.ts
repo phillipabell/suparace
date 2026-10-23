@@ -5,7 +5,8 @@
 //   --runs R             runs per race per N (default 3)
 //   --race a,b           claim:<method>, spend:<method>, spend-ledger, transfer:<method>[@pause_ms],
 //                        webhook:<method>[@K], or claim / spend / transfer / webhook for all methods
-//                        (webhook: K = deliveries per event id, default 10).
+//                        (webhook: K = deliveries per event id, default 10), crash:<method>[@P] or crash
+//                        (P = percent of workers that crash, same percent stall; default 10; needs --mode drain).
 //                        Default: claim + spend (all methods).
 //   --score invariant|response|both   default invariant. Given alone (no --race), runs spend-ledger in burst mode,
 //                        which is the v0.1 --score behaviour.
@@ -15,8 +16,8 @@
 import { writeFileSync } from 'node:fs';
 import { runRace, exitCode, type Mode, type Score, type Report, type Race } from './lib.ts';
 import { CLAIM, SPEND, TRANSFER, claimRace, spendRace, spendLedgerRace, transferRace, type Target } from './scenarios.ts';
-import { CLAIM, SPEND, claimRace, spendRace, spendLedgerRace, type Target } from './scenarios.ts';
 import { WEBHOOK, webhookRace } from './webhook.ts';
+import { CRASH, crashRace } from './crash.ts';
 
 const die = (m: string) => { console.error(m); process.exit(2); };
 const url = process.env.SUPARACE_URL ?? 'http://127.0.0.1:8000', key = process.env.SUPARACE_KEY;
@@ -40,10 +41,12 @@ function races(): Race[] {
   const names = (raceArg ?? 'claim,spend').split(',').flatMap((r) =>
     r === 'claim' ? Object.keys(CLAIM).map((m) => `claim:${m}`) : r === 'spend' ? Object.keys(SPEND).map((m) => `spend:${m}`)
       : r === 'transfer' ? Object.keys(TRANSFER).map((m) => `transfer:${m}`)
-      : r === 'webhook' ? Object.keys(WEBHOOK).map((m) => `webhook:${m}`) : [r]);
+      : r === 'webhook' ? Object.keys(WEBHOOK).map((m) => `webhook:${m}`)
+      : r === 'crash' ? Object.keys(CRASH).map((m) => `crash:${m}`) : [r]);
   return names.map((r) => {
     const [op, m] = r.split(':');
     if (op === 'webhook') return webhookRace(t, m);
+    if (op === 'crash') return crashRace(t, m);
     if (op === 'claim') return claimRace(t, m);
     if (op === 'spend') return spendRace(t, m);
     if (op === 'spend-ledger') return spendLedgerRace(t);
