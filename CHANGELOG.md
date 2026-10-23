@@ -6,7 +6,11 @@
   caller order, and the fix (both rows locked in id order in one function). Invariants: total constant, no negative
   balance, no deadlock (client 40P01 or `pg_stat_database.deadlocks` delta), no client error. `--race transfer`,
   `transfer:<method>@<pause_ms>`. Measured self-hosted burst N=100 x5 (README).
-- Tests: 14.
+- Exactly-once webhook race (`src/webhook.ts`, `sql/006_webhook.sql`): same event id delivered K times at once;
+  naive check-then-process vs `insert ... on conflict do nothing returning` vs advisory lock. `--race webhook[:m@K]`.
+  Measured self-hosted N=100 burst x5 at K=2/10/100: naive 44.8 / 67.8 / 71.2 extra side effects (mean), both
+  fixes 0 in every run. Results `results/webhook-burst-2026-10-22.json[l]`.
+- Tests: 17.
 
 ## 0.3.0 (2026-10-22)
 

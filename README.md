@@ -258,6 +258,40 @@ What this shows (measured, this setup only):
   `lock_timeout`/`NOWAIT`, a single `UPDATE ... CASE` transfer, advisory locks, pool size and wallet-count sweeps
   (10 hot wallets here), more than 5 runs.
 
+## Exactly-once webhook processing (measured 2026-10-22)
+
+`webhookRace` in `src/webhook.ts`, schema `sql/006_webhook.sql` (remove with `sql/006_webhook_drop.sql`). Webhook
+providers retry, so the same event id can arrive several times at once. N handlers fire in one burst; handler i
+gets event `i mod E`, with E = ceil(N/K), so each event id is delivered K times concurrently. The side effect is
+one `webhook_effects` row per time a handler actually ran it. Invariant: exactly one side effect per event.
+
+- `naive`: select "already processed?", run the side effect, then mark the event processed (upsert that ignores
+  duplicates). Three HTTP calls, no transaction.
+- `on_conflict`: one RPC: `insert into webhook_events ... on conflict (event_id) do nothing returning`, side effect
+  only if a row came back. The primary key on the event id is the dedupe.
+- `advisory_lock`: one RPC: `pg_advisory_xact_lock` on the event id, then check-then-insert under the lock.
+
+Run: `./run.sh 100 --mode burst --runs 5 --score both --race webhook:naive@2,webhook:on_conflict@100,...`
+(`--race webhook` runs all three methods at K=10). Self-hosted, burst, N=100 handlers, 5 runs per cell, all 9 cells
+matched their expected outcome (exit 0). Raw: `results/webhook-burst-2026-10-22.json[l]`.
+
+| Method | K=2 (50 events) | K=10 (10 events) | K=100 (1 event) | p50 ms (K=2/10/100) |
+|---|---|---|---|---|
+| naive: extra side effects, mean (min-max) | 44.8 (39-49) of 50 possible | 67.8 (59-78) of 90 | 71.2 (62-80) of 99 | 140 / 133 / 116 |
+| naive: runs flagged (invariant / response-only) | 5/5 / 0/5 | 5/5 / 0/5 | 5/5 / 0/5 | |
+| on_conflict: extra side effects | 0 in 5/5 runs | 0 | 0 | 47 / 40 / 36 |
+| advisory_lock: extra side effects | 0 in 5/5 runs | 0 | 0 | 46 / 39 / 42 |
+
+What this shows (measured, this setup only):
+- The naive handler double-processed in every run at every K. At K=100 one event's side effect ran up to 81 times
+  in a single run. Every call returned 2xx, so response-only scoring flagged 0 of 15 naive runs.
+- Both fixes applied each side effect exactly once in all 30 runs, with no errors, and were faster than the naive
+  three-call handler (one round trip instead of three).
+- Hypothesis, not measured: the side effect must live inside the same transaction as the dedupe insert. If the
+  handler calls an external API (email, payment) after the RPC returns, a crash between the two loses the effect;
+  that needs an outbox or the provider's own idempotency key, which this test does not cover.
+- Not tested: the free hosted project (self-hosted only so far), duplicates spread over time instead of one burst.
+
 ## How it runs
 
 - Measured setup for every "self-hosted" number in this README: the official self-hosted Supabase stack under
@@ -490,7 +524,7 @@ revoked from anon in `sql/001_schema.sql`; the RLS matrix above confirms anon is
 1. npm package with a `npx suparace init|run` CLI, then a thin GitHub Action over the CLI.
 2. RLS matrix rerun on a free hosted project (so far self-hosted only).
 3. Crash-safe pgmq (`read` + visibility timeout + `delete`): kill a worker mid-job, measure redelivery.
-4. Exactly-once webhook processing (unique idempotency key + `insert ... on conflict do nothing`).
+4. Exactly-once webhook processing: done (self-hosted), see above. Hosted rerun not done.
 5. SERIALIZABLE + retry loop as a comparison row (claim, spend, transfer).
 6. Transfer race on a free hosted project.
 
