@@ -16,8 +16,10 @@ passes because each request on its own returns 2xx. SupaRace contains:
 
 Every number below is **measured** (with N, mode and target stated) unless it is marked **hypothesis**.
 
-Status: v0.3, early. Packaged for npm as `suparace` (CLI + library) but **not published yet**; until it is, use a
-clone (`npm install && npm run build && npm pack`, then `npx --package ./suparace-0.3.0.tgz suparace ...`).
+Status: v0.3, early. Packaged for npm as `suparace` (CLI + library) but **not published yet**; until it is, install
+straight from GitHub (npm builds it on install): `npm install --save-dev github:phillipabell/suparace`, then the
+`npx suparace ...` commands below work as written. One-off without installing:
+`npx --package github:phillipabell/suparace suparace --help`.
 
 ## 5-minute quickstart (`npx suparace`)
 
