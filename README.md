@@ -174,12 +174,13 @@ race breaks an invariant, with a results table in the job summary. Copy `example
   `cli: npm` runs `npx suparace@<version>` instead, once the package is on npm.
 - Exit code: the CLI's own (0 every race matched its `expect`, 1 a race failed, 2 bad config or unreachable target).
 
-**Status (2026-10-23):** checked locally only, not yet run on GitHub. Measured: actionlint 1.7.7 passes on the
-action metadata and the example workflow; shellcheck 0.10.0 passes on the scripts; `test/action.test.ts` runs the
-run step against a stub CLI (inputs passed through, exit code kept, `pass` output and summary written). Against a
-local self-hosted stack, only the unreachable-target path was exercised (exit 2, "no report" summary). **Hypothesis,
-not tested:** `supabase start` with the default exclusions comes up on a GitHub-hosted ubuntu runner within the
-job's free minutes. The first green run on GitHub comes with the npm release.
+**Status (2026-11-07): ran live on GitHub.** A fresh private repo set up the way a stranger would (`npx --package
+github:phillipabell/suparace suparace init`, copy `examples/suparace-ci.yml` unchanged, push, run): `spend:atomic`
+passed (0/3 runs flagged), job green in 1m58s on `ubuntu-latest`; switching to `spend:naive` failed the job as it
+should (3/3 runs flagged, `no_overspend` and `balance_matches` broken), 2m03s. Almost all of the time is `supabase
+start` pulling images (about 1m40s); the races take about a second. Both runs hit `toomanyrequests` from
+public.ecr.aws during the pull and the Supabase CLI's own retries recovered. No secrets or settings needed for
+`target: local`. Also checked locally: actionlint 1.7.7, shellcheck 0.10.0, `test/action.test.ts`.
 
 ## RLS matrix: the races through the Data API with real JWTs (measured 2026-10-22)
 
@@ -598,7 +599,7 @@ revoked from anon in `sql/001_schema.sql`; the RLS matrix above confirms anon is
 ## Roadmap
 
 1. npm package with a `npx suparace init|run` CLI (built, publish pending), then a thin GitHub Action over the CLI
-   (built, see "GitHub Action"; first run on GitHub pending).
+   (built, see "GitHub Action"; first live run on GitHub passed 2026-11-07).
 2. RLS matrix rerun on a free hosted project (so far self-hosted only).
 3. Crash-safe pgmq: done (self-hosted), see above. Hosted rerun and real process kills not done.
 4. Exactly-once webhook processing: done (self-hosted), see above. Hosted rerun not done.
