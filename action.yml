@@ -40,8 +40,8 @@ inputs:
     description: Optional anon / publishable key, for races that use anonClient().
     default: ""
   exclude-services:
-    description: "target=local: services passed to `supabase start -x` (not needed for races; makes start faster)."
-    default: studio,imgproxy,edge-runtime,logflare,vector,realtime,storage-api,supavisor
+    description: "target=local: services passed to `supabase start -x` (not needed for races; fewer images to pull). gotrue stays, the RLS races sign users in."
+    default: studio,imgproxy,edge-runtime,logflare,vector,realtime,storage-api,supavisor,mailpit
   cli:
     description: "'action' runs the CLI from this action's own checkout (same version as the action tag). 'npm' runs `npx suparace@<version>`."
     default: action

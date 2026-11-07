@@ -151,12 +151,12 @@ Same counts within run-to-run noise; the fixes are 0 violations in every run und
 ## GitHub Action
 
 `action.yml` in this repo is a thin composite action over the CLI. It runs your race files and fails the job when a
-race breaks an invariant, with a results table in the job summary. Copy `examples/suparace-ci.yml` to
-`.github/workflows/` in your repo.
+race breaks an invariant, with a results table in the job summary. `npx suparace init --ci` writes
+`.github/workflows/suparace.yml` (one job, pinned to the `v0.3.0` tag) next to the example race.
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: phillipabell/suparace@main      # pin a release tag once one exists
+- uses: phillipabell/suparace@v0.3.0    # a release tag, not @main
   with:
     target: local                       # supabase start on the runner (GitHub's Docker), torn down after
     sql: suparace/quickstart.sql        # schema + functions under test, applied with psql
@@ -175,7 +175,7 @@ race breaks an invariant, with a results table in the job summary. Copy `example
 - Exit code: the CLI's own (0 every race matched its `expect`, 1 a race failed, 2 bad config or unreachable target).
 
 **Status (2026-11-07): ran live on GitHub.** A fresh private repo set up the way a stranger would (`npx --package
-github:phillipabell/suparace suparace init`, copy `examples/suparace-ci.yml` unchanged, push, run): `spend:atomic`
+github:phillipabell/suparace suparace init`, copy `examples/suparace-ci.yml` unchanged, push, run; the file is now `templates/suparace.yml`, written by `init --ci`): `spend:atomic`
 passed (0/3 runs flagged), job green in 1m58s on `ubuntu-latest`; switching to `spend:naive` failed the job as it
 should (3/3 runs flagged, `no_overspend` and `balance_matches` broken), 2m03s. Almost all of the time is `supabase
 start` pulling images (about 1m40s); the races take about a second. Both runs hit `toomanyrequests` from

@@ -1,7 +1,7 @@
 // suparace CLI (the npm bin). `suparace init` writes an example; `suparace run` runs race files.
 // Repo-local v0.1/v0.2 scenario runner is src/race.ts (./run.sh), unchanged.
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, copyFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { defineRace, runRace, exitCode, type Mode, type Score, type Race, type Report } from './lib.ts';
@@ -13,7 +13,8 @@ const RACE_FILE = /\.race\.(mjs|js|ts|mts)$/;
 const HELP = `suparace ${VERSION}: race tests for supabase-js read-then-write bugs
 
 Usage:
-  suparace init [dir]        write <dir>/quickstart.sql and <dir>/spend.race.mjs (default dir: suparace)
+  suparace init [dir] [--ci] write <dir>/quickstart.sql and <dir>/spend.race.mjs (default dir: suparace);
+                             --ci also writes .github/workflows/suparace.yml (the GitHub Action, pinned to a release tag)
   suparace run [files|dirs]  run race files (default: suparace/*.race.{mjs,js,ts,mts})
 
 run options:
@@ -53,14 +54,16 @@ export function helpers(env: NodeJS.ProcessEnv = process.env): Helpers {
   };
 }
 
-export function init(dir = 'suparace', log = console.log): string[] {
+export function init(dir = 'suparace', log = console.log, ci = false): string[] {
   mkdirSync(dir, { recursive: true });
   const wrote: string[] = [];
-  for (const f of ['quickstart.sql', 'spend.race.mjs']) {
-    const dest = join(dir, f);
-    if (existsSync(dest)) { log(`exists, left as is: ${dest}`); continue; }
-    copyFileSync(join(ROOT, 'templates', f), dest); wrote.push(dest); log(`wrote ${dest}`);
-  }
+  const copy = (from: string, dest: string) => {
+    if (existsSync(dest)) { log(`exists, left as is: ${dest}`); return; }
+    mkdirSync(dirname(dest), { recursive: true });
+    copyFileSync(join(ROOT, 'templates', from), dest); wrote.push(dest); log(`wrote ${dest}`);
+  };
+  for (const f of ['quickstart.sql', 'spend.race.mjs']) copy(f, join(dir, f));
+  if (ci) copy('suparace.yml', join('.github', 'workflows', 'suparace.yml'));
   return wrote;
 }
 
@@ -153,7 +156,13 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   try {
     if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') { console.log(HELP); return cmd ? 0 : 2; }
     if (cmd === '--version' || cmd === '-v') { console.log(VERSION); return 0; }
-    if (cmd === 'init') { init(rest[0]); console.log('next: run quickstart.sql in your project, then `npx suparace run`'); return 0; }
+    if (cmd === 'init') {
+      const ci = rest.includes('--ci');
+      init(rest.find((a) => !a.startsWith('--')), console.log, ci);
+      console.log(ci ? 'next: commit suparace/ and .github/workflows/suparace.yml and push; the Action runs the races on the runner'
+        : 'next: run quickstart.sql in your project, then `npx suparace run`');
+      return 0;
+    }
     if (cmd === 'run') return (await run(rest)).code;
     fail(`unknown command ${cmd} (try --help)`);
   } catch (e: any) {

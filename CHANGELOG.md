@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `suparace init --ci` also writes `.github/workflows/suparace.yml` (template `templates/suparace.yml`, replaces
+  `examples/suparace-ci.yml`): one job, action pinned to the `v0.3.0` tag; the throwaway-project job is a comment.
+- Action: `mailpit` added to the default `exclude-services` (fewer images to pull; gotrue stays for the RLS races).
+- Git tag and GitHub release `v0.3.0` cut 2026-11-07 at the commit that adds `init --ci`, so it includes everything
+  listed here as well as the 0.3.0 entry below.
 - Crash-safe pgmq race (`src/crash.ts`, `sql/007_crash.sql`): P% of workers crash holding a job, P% stall past the
   visibility timeout. `pop` vs `read` + vt + archive without and with an `on conflict do nothing` guard. Invariants: no
   lost jobs, no double completion. `--race crash[:m@P]`, drain mode. Measured self-hosted N=100 x5 at P=10 and 30

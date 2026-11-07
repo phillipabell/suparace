@@ -31,6 +31,21 @@ test('init writes the SQL and race file, never overwrites', () => {
   assert.equal(readFileSync(join(d, 'spend.race.mjs'), 'utf8'), '// mine');
 });
 
+test('init --ci also writes the workflow pinned to a tag, never overwrites it', () => {
+  const cwd = process.cwd(); const base = tmp(); process.chdir(base);
+  try {
+    const wrote = init('suparace', quiet, true);
+    assert.equal(wrote.length, 3);
+    const wf = readFileSync(join(base, '.github', 'workflows', 'suparace.yml'), 'utf8');
+    assert.match(wf, /phillipabell\/suparace@v\d+\.\d+\.\d+/);
+    assert.doesNotMatch(wf, /@main/);
+    assert.equal(wf.match(/^  [a-z-]+:\s*$/gm)?.length, 1, 'one job on the first run');
+    writeFileSync(join(base, '.github', 'workflows', 'suparace.yml'), '# mine');
+    assert.equal(init('suparace', quiet, true).length, 0);
+    assert.equal(readFileSync(join(base, '.github', 'workflows', 'suparace.yml'), 'utf8'), '# mine');
+  } finally { process.chdir(cwd); }
+});
+
 test('the init race file loads and builds two races with lazy clients', async () => {
   const d = join(tmp(), 'suparace'); init(d, quiet);
   const env = { SUPABASE_URL: 'http://127.0.0.1:1', SUPABASE_SERVICE_ROLE_KEY: 'x' };
