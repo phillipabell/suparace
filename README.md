@@ -182,6 +182,12 @@ start` pulling images (about 1m40s); the races take about a second. Both runs hi
 public.ecr.aws during the pull and the Supabase CLI's own retries recovered. No secrets or settings needed for
 `target: local`. Also checked locally: actionlint 1.7.7, shellcheck 0.10.0, `test/action.test.ts`.
 
+**Zero-config rerun (2026-11-07, v0.3.0 tag):** on the same private repo with nothing in it, three commands: `npx --package
+github:phillipabell/suparace#v0.3.0 suparace init --ci` (4.6 s, cold cache), `git commit` + `git push` (0.6 s), then one
+`gh workflow run` (the workflow triggers on pull requests and manual dispatch, not on push). One job, `spend:atomic`
+passed, job time **1m53s** against 1m58s before `mailpit` was excluded: one run each, so the 5 s difference is within
+what run-to-run variation could produce. We did not read the pull logs for `toomanyrequests` on this run.
+
 ## RLS matrix: the races through the Data API with real JWTs (measured 2026-10-22)
 
 `src/rls.ts` (schema `sql/004_rls.sql`, remove with `sql/004_rls_drop.sql`). Two throwaway users are created with
